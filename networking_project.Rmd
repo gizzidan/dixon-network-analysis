@@ -1,0 +1,394 @@
+---
+title: "Networking Project"
+author: "William D. Gizzi"
+date: "11/7/2018"
+output:
+  tufte::tufte_handout: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load Data
+
+I will start by loading the data and visualizing the network.
+
+```{r load, results="hide", message=FALSE, warning=FALSE}
+library(statnet)
+library(UserNetR)
+library(igraph)
+library(igraphdata)
+library(intergraph)
+library(ergm)
+
+par()
+
+set.seed(123)
+
+data("faux.dixon.high")
+dixon <- asIgraph(faux.dixon.high)
+dixon.v.df<-as_data_frame(dixon,what="vertices")
+dixon.e.df<-as_data_frame(dixon,what="edges")
+write.csv(dixon.v.df,file="dixon_V.csv") #Vertices
+write.csv(dixon.e.df,file="dixon_e.csv") #Edges
+```
+
+This network is a directed network of Dixon School. There are 248 nodes, 1197 edges, and node attributes of grade, race, and sex. Let's do a little exploration just to get an idea of what the data is like.
+
+# Exploration
+
+```{r fig.height = 5, fig.width = 7}
+
+# add some colors 
+blue <- "#7F7EFF"
+green <- "#B8E0D2"
+red <- "#E63462"
+
+prep <- table(V(dixon)$race)
+names = c("Black", "Hispanic", "Other", "White")
+a = barplot(prep, col=blue, names.arg = "", main="Number of Students By Race")
+text(a[,1], -3.7, srt = 60, adj= 1, xpd = TRUE, labels = names , cex=1.2)
+
+prep <- table(V(dixon)$grade)
+b = barplot(prep, col=blue, main="Number of Students By Grade")
+
+```
+
+The first graph suggests that there is an equal amount of non-minority students vs. minority students. There are slightly more students in grades 8-10, but not by an excessive amount. Let's plot the network so we can visualize the connections. I hypothesize that students will group together based on whether or not they are a minority, by whether they are in high school or middle school, and by sex.
+
+## Network Plots
+
+```{r, fig.height=6, fig.width=6}
+par(mfrow=c(1,1))
+l <- layout.auto
+plot(dixon, edge.width=0.1,
+     edge.arrow.size=.1,
+     main = "Dixon School Network",
+     vertex.label = NA,
+     vertex.label.color="black",
+     vertex.label.cex=.3,
+     vertex.color = NA,
+     vertex.size=2,
+     vertex.label.dist=1,
+     rescale=T, layout=l, asp=9/16)
+```
+
+So, at first glance it looks like there are some nodes with 0 degree. Let's verify that and remove them.
+
+```{r}
+degree(dixon)
+```
+
+```{r}
+dixon <- delete_vertices(dixon, which(degree(dixon)<1)) #delete nodes with 0 degree
+```
+
+```{r fig.height=6, fig.width=6}
+
+V(dixon)$color = ifelse (V(dixon)$race == "W", red, blue) # set color by minority status, "other" is counted as a minority
+plot(dixon, edge.width=0.1,
+     main = "School Network By Minority Status",
+     edge.arrow.size=.1,
+     vertex.label = NA,
+     vertex.label.color="black",
+     vertex.label.cex=.3,
+     vertex.size=2,
+     vertex.label.dist=1,
+     rescale=T, layout=l, asp=9/16)
+
+legend("bottomright", 
+  legend = c("Not Minority", "Minority"), 
+  col = c(red, 
+  blue), 
+  pch = c(19,19), 
+  bty = "n", 
+  pt.cex = .8, 
+  cex = .8, 
+  text.col = "black", 
+  horiz = F , 
+  inset = c(0.1, 0.1))
+```
+
+It is easy to observe two distinct clusters. Perhaps the race attribute will prove to be a useful attribute for our model. Let's look at a couple more visualizations.
+
+
+```{r fig.height=6, fig.width=6}
+l <- layout.auto
+V(dixon)$color = ifelse (V(dixon)$sex == 1, red, blue) # set color by sex
+plot(dixon, edge.width=0.1,
+     main = "School Network By Sex",
+     edge.arrow.size=.1,
+     vertex.label = NA,
+     vertex.label.color="black",
+     vertex.label.cex=.3,
+     vertex.size=2,
+     vertex.label.dist=1,
+     rescale=T, layout=l, asp=9/16)
+
+legend("bottomright", 
+  legend = c("Male", "Female"), 
+  col = c(red, 
+  blue), 
+  pch = c(19,19), 
+  bty = "n", 
+  pt.cex = .8, 
+  cex = .8, 
+  text.col = "black", 
+  horiz = F , 
+  inset = c(0.1, 0.1))
+```
+
+There doesn't seem to be much of a distinction between male and female. 
+
+```{r fig.height=6, fig.width=6}
+l <- layout.auto
+V(dixon)$color = ifelse (V(dixon)$grade >= 9, red, blue)
+plot(dixon, edge.width=0.1,
+     main = "School Network (High School vs. Middle School)",
+     edge.arrow.size=.1,
+     vertex.label = NA,
+     vertex.label.color="black",
+     vertex.label.cex=.3,
+     vertex.size=2,
+     vertex.label.dist=1,
+     rescale=T, layout=l, asp=9/16)
+
+legend("bottomright", 
+  legend = c("High School", "Middle School"), 
+  col = c(red, 
+  blue), 
+  pch = c(19,19), 
+  bty = "n", 
+  pt.cex = .8, 
+  cex = .8, 
+  text.col = "black", 
+  horiz = F , 
+  inset = c(0.1, 0.1))
+```
+
+While it is expected to have each grade level cluster together, I was curious to see if there was an easily identifiable difference between high school and middle school students (also expected). In a future analysis, it might be interesting to see which middle schoolers and high schoolers act as "bridges" between middle school and high school students or communities. How does the degree distribution look? This could help us get an idea of "popularity."
+
+
+```{r fig.margin=TRUE}
+hist(degree(dixon))
+```
+
+Here, the histogram of degree shows that most students have 0 - 10 connections. It looks like only a couple of students have the highest degree in the range 30 - 35. Let's look at some centrality measures.
+
+## Centrality
+
+```{r warning=FALSE}
+central <- centralization.degree(dixon)$res
+between <- betweenness(dixon, normalized = TRUE)
+close <- closeness(dixon, normalized=TRUE)
+eigen <- eigen_centrality(dixon)$vector
+
+info <- data.frame(central, round(between, 3), round(close, 3), round(eigen, 3), row.names = V(dixon)$vertex.names)
+
+colnames(info) <- c("Degree Centrality", "Betweenness", "Closeness", "Eigenvector Centrality")
+
+ordered <- info[order(-info$`Degree Centrality`),] # order by degree centrality
+ordered[1:30,]
+```
+
+Here, I calcuated different centrality metrics to get an idea of which students are the most popular. I've only shown the first 30 for the sake of saving space. It looks like student 178 is the most popular. Let's take a closer look at the students with the top 5 degree centrality and see if we can find anything interesting.
+
+```{r}
+ordered[1:5,]
+```
+
+The only thing that jumps out is that student 58 has a similar degree to the others, but a relatively larger betweenness than the others. This could mean that student 58 is crucial for information flow. Let's take a closer look at the betweenness values.
+
+```{r}
+ordered2 <- info[order(-info$Betweenness),]
+ordered2[1:5, 1:2]
+```
+
+So, student 228 has a relatively large betweenness with a lower degree than expected. Thus, student 228 may also be crucial for information flow. Next, let's see what communities we can identify from the network.
+
+# Communities
+
+I've decicded to test out the edge betweenness community algorithm because there does seem to be significantly varying betweenness within the network, and the walktrap community algorithm because it works on both undirected and directed networks and its original publication suggests that it's a bit more accurate than fastgreedy. 
+
+```{r, warning=FALSE, message=FALSE}
+edge.betweenness.community(dixon)
+```
+
+It looks like the edge betweenness community algorithm detected 124 groups. This seems like a bit much. Let's see how the walktrap algorithm does.
+
+```{r}
+walktrap <- walktrap.community(dixon)
+walktrap
+```
+
+```{r, results="hide"}
+dixon <- set_vertex_attr(dixon, "community", V(dixon), walktrap$membership) # add community as attribute
+```
+
+20 groups seems much more reasonable. Let's visualize it.
+
+## Community Visualization
+
+```{r fig.height=6, fig.width=6}
+
+V(dixon)$size = 1
+E(dixon)$count = 1
+comm.graph <- contract.vertices(dixon, walktrap$membership, vertex.attr.comb=list(size="sum", "ignore"))
+comm.graph <- simplify(comm.graph, remove.loops=FALSE, edge.attr.comb=list(count="sum", "ignore"))
+plot(comm.graph, main = "Dixon Communities",
+     edge.arrow.size=.01,
+     edge.width = 0.3,
+     vertex.frame.color=red,
+     vertex.color=NA,
+     vertex.label.color="black",
+     vertex.label.cex=.7,
+     vertex.label.dist=1,
+     rescale=T, layout=layout_in_circle(comm.graph))
+```
+
+Communities 9, 4, and 12 seem to be the largest. Let's dive a little deeper into the specifics of each community.
+
+## Community Analysis
+
+```{r fig.height=5, fig.width=7}
+V(dixon)$color = ifelse (V(dixon)$race == "W", green, blue)
+prep <- table(V(dixon)$color, V(dixon)$community)
+prep <- prep[,1:14] # limit to groups with more than 1 member
+barplot(prep, col = c(blue,green), xlab = "Community")
+
+legend("topleft", 
+  legend = c("Not Minority", "Minority"), 
+  col = c(green, 
+  blue), 
+  pch = c(19,19), 
+  bty = "n", 
+  pt.cex = .9, 
+  cex = .9, 
+  text.col = "black", 
+  horiz = F , 
+  inset = c(0.1, 0.1))
+
+V(dixon)$color = ifelse (V(dixon)$race >= 9, green, blue)
+prep <- table(V(dixon)$color, V(dixon)$community)
+prep <- prep[,1:14] # limit to groups with more than 1 member
+barplot(prep, col = c(blue,green), xlab = "Community")
+
+legend("topleft", 
+  legend = c("High School", "Middle School"), 
+  col = c(blue, 
+  green), 
+  pch = c(19,19), 
+  bty = "n", 
+  pt.cex = .9, 
+  cex = .9, 
+  text.col = "black", 
+  horiz = F , 
+  inset = c(0.1, 0.1))
+
+V(dixon)$color = ifelse (V(dixon)$sex == 2, green, blue)
+prep <- table(V(dixon)$color, V(dixon)$community)
+prep <- prep[,1:14] # limit to groups with more than 1 member
+barplot(prep, col = c(blue,green), xlab = "Community")
+
+legend("topleft", 
+  legend = c("Female", "Male"), 
+  col = c(blue, 
+  green), 
+  pch = c(19,19), 
+  bty = "n", 
+  pt.cex = .9, 
+  cex = .9, 
+  text.col = "black", 
+  horiz = F , 
+  inset = c(0.1, 0.1))
+```
+
+The first barplot does a decent job of showing the distribution between non-minority and minority students for each community. While most communities aren't too diverse; communities 6, 12, and 13 have a decent amount of both non-minority and minority students. The second graph shows, as expected, that high schoolers and middle schoolers don't mix in communities. Other than communities 2 and 8, most communities seem to be evenly split between male and female. These findings suggest that the walktrap method is identifying communities in-line with what we observed in our earlier visualizations. 
+
+# ERGM
+
+First, let's estimate the Dixon network with the null model, the simplest possible model.
+
+## Null Model
+
+```{r}
+set.seed(123)
+dixon.net <- asNetwork(dixon) # convert back in order to use communities in ERGM (we removed nodes with degree 0 a little while back)
+null <- ergm( dixon.net ~ edges )
+summary(null) 
+```
+
+First, the negative edges coefficient shows that the density of the network is less than 50%, which is normal. The coefficient can also be used to show that the probability of creating an additional edge by adding another node is 0.02104361 
+
+```{r}
+plogis(-3.83989)
+```
+
+
+```{r}
+simtrinull<-simulate( null, nsim = 100, monitor=~triangles, statsonly=TRUE, control=control.simulate.ergm(MCMC.burnin=1000, MCMC.interval=1000), seed=567)
+dixon.tri <- summary( faux.dixon.high~triangle ) 
+par( mar = c( 4,4,1,1 ), cex.main = .9, cex.lab = .9,cex.axis = .75 ) 
+hist(simtrinull[,2]) 
+points(dixon.tri,3, pch="X", cex=2)
+```
+
+```{r}
+"Actual number of triangles in Dixon network"
+sum(count_triangles(dixon))
+```
+
+The histogram shows that the null model does not get anywhere near all of the formed triangles (1878 total). Let's add some attributes to our model and see if we can make it better.
+
+## Full Model
+
+```{r cache=TRUE}
+set.seed(123)
+model <- ergm( dixon.net ~ edges + mutual + nodematch("grade")  + nodematch("race")
+               + nodematch("sex") + gwesp(0.25, fixed=TRUE), 
+               control=control.ergm(MCMC.samplesize=40000,MCMC.interval=1000))
+summary(model)  
+```
+
+Ok, so the AIC value here is much lower (8448 vs. 11793) which suggests a better fit. Furthermore, all of the selected features are significant (p-value < 0.05). The hypothesis is that ties involving homophily of grade, race, and sex are significantly more than what would be expected in a simple random graph. Furthermore I added a term for mutuality (tendency for ties to be reciprocated) and the gwesp term to account for the social preference to be friends with your friends' friends. 
+
+## GOF
+
+```{r}
+nullsim <- simulate(null, verbose = TRUE,seed = 123)
+mainsim <- simulate(model, verbose = TRUE, seed = 123) #Simulations based on full model
+
+rowgof <- rbind(summary(faux.dixon.high ~ edges +
+                  triangle),
+                  summary(nullsim ~ edges + triangle),
+                  summary(mainsim ~ edges + triangle))
+                  rownames(rowgof) <- c("Dixon", "Null", "Full Model")
+rowgof
+```
+
+Here, the full model is almost perfect. It does a much better job of getting all of the edges and triangles than the null model. 
+
+```{r cache=TRUE, fig.height=3, fig.width=6}
+
+gof <- gof(model)
+par(mfrow=c(1,2))
+plot( gof, cex.lab = 1, cex.axis = 1) 
+plot(gof, cex.lab = 1, cex.axis = 1, plotlogodds = T )
+
+```
+
+The goodness of fit graphs show that most of the terms have been modeled well. There may be some minor issue with the out degree, but nothing jumps out as problematic. 
+ 
+```{r}
+gof
+```
+
+For the in-degree nodes there doesn't appear to be any significant difference between the simulated network and original network for all of the nodes. The same can be said for the out-degree nodes except for those with a low p-value (nodes 0, 1)
+```{r fig.height=3, fig.width=6}
+par(mfrow=c(6,2))
+par(mar=c(2,1,2,1))
+mcmc <- mcmc.diagnostics(model)
+```
+
+The MCMC diagnostic plots show that the process converged for each term (no skewness and generally centered close to 0)
